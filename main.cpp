@@ -9,29 +9,27 @@
 
 
 size_t NO_PLACE = -1;
+size_t TOTAL_MONTH = 17;
 
 
 struct TPoint {
     double x;
     double y;
     size_t place_id;
-    int minute;
-    int wday;
-    int week;
     int time;
     double accuracy;
 
 
-    TPoint(double x, double y, size_t place, int time, double accuracy) :
-        x(x), y(y), place_id(place), minute(time % 1440), wday((time / 1440) % 7), week((time / 1440 /  7)), time(time), accuracy(accuracy)
+    TPoint(double x, double y, size_t place_id, int time, double accuracy) :
+        x(x), y(y), place_id(place_id), time(time), accuracy(accuracy)
     {}
 
     TPoint(double x, double y, int time, double accuracy) :
-        x(x), y(y), place_id(NO_PLACE), minute(time % 1440), wday((time / 1440) % 7), week((time / 1440 /  7)), time(time), accuracy(accuracy)
+        x(x), y(y), place_id(NO_PLACE), time(time), accuracy(accuracy)
     {}
 
     TPoint(const TPoint& other) : 
-        x(other.x), y(other.y), place_id(other.place_id), minute(other.minute), wday(other.wday), week(other.week), time(other.time), accuracy(other.accuracy)
+        x(other.x), y(other.y), place_id(other.place_id), time(other.time), accuracy(other.accuracy)
     {}
 
     double cycle_div(int a, int b, int period) const {
@@ -43,19 +41,40 @@ struct TPoint {
         ans.x = std::abs(x - other.x);
         ans.y = std::abs(y - other.y);
         ans.place_id = NO_PLACE;
-        ans.minute =  cycle_div(minute, other.minute, 1440);
-        ans.accuracy = std::min(accuracy, other.accuracy);
-        ans.wday = cycle_div(wday, other.wday, 7);
         ans.time = std::abs(time - other.time);
-        ans.week = std::abs(week - other.week);
+        ans.accuracy = std::abs(log10(accuracy) - log10(other.accuracy));
         return ans;
     }
 
+    int minute() const {
+        return std::min(time % 1440, 1440 - time % 1440);
+    }
+
+    int wday() const {
+        int day = time / 1440;
+        return std::min(day % 7, (6 - day % 7));
+    }
+
+    int month() const {
+        int month = time / 1440 / 30;
+        return std::min(month % 12, (11 - month % 12));
+    }
+
     double abs() const {
-        return sqrt(x * x + 4 * y * y + double(minute * minute) / (60 * 60 * 125 * 125) + double(wday * wday) / (500 * 500) + double(time * time) / (size_t(60) * 24 * 7 * 500 * 60 * 24 * 7 * 500));
+        // std::cout << "Ass: " << minute() << " " << wday() << std::endl;
+        // return sqrt(x * x / 4 + 4 * y * y + double(minute() * minute()) / (60 * 60 * 125 * 125) + double(wday() * wday()) / (500 * 500));
+        return std::abs(x + 2  * y + double(minute()) / (60 * 125) + double(wday()) / 500 + accuracy / 100 + month() / 500); // + double(time * time) / (size_t(60) * 24 * 7 * 500 * 60 * 24 * 7 * 500)
+        // return std::abs(x * 500 + y * 1000 + double(minute()) * 2 / 3 + double(wday()) * 3 + 10 * accuracy);
     }
 };
 
+struct TStats {
+    TStats() : time_coef(0), size_coef(0) 
+    {}
+
+    double time_coef;
+    double size_coef;
+};
 
 inline double dist(const TPoint &p1, const TPoint &p2) {
     return (p1 - p2).abs();
@@ -80,42 +99,73 @@ inline double proxmity_score(size_t targ, const std::vector<TPoint>& targs, size
     n = std::min(n, targs.size());
     for (size_t i = 0; i < n; ++i) {
         found += (targ == targs[i].place_id); 
-        map += double(found) / n;
+        map += double(found) / (i + 1) / n;
     }
 
     return map;
 }
 
-std::map<size_t, std::vector<double>> get_time_coefs(const std::vector<TPoint>& pts) {
-    // std::vector<size_t> total_counter(24, 0);
-    std::map<size_t, std::vector<double>> result;
-    std::map<size_t, size_t> total;
+// std::map<size_t, std::vector<double>> get_time_coefs(const std::vector<TPoint>& pts) {
+//     // std::vector<size_t> total_counter(24, 0);
+//     std::map<size_t, std::vector<double>> result;
+//     std::map<size_t, size_t> total;
 
-    size_t shift = std::min(pts.size(), size_t(3000000));
-    for (size_t i = (pts.size() - shift); i < pts.size(); ++ i) {
-        int hour = (pts[i].minute / 60) % 24;
-        // total_counter[hour] += 1;
+    
+//     for (size_t i = (pts.size() - shift); i < pts.size(); ++ i) {
+//         int hour = (pts[i].minute / 60) % 24;
+//         // total_counter[hour] += 1;
+//         size_t place_id = pts[i].place_id;
+        
+//         if (result.find(place_id) == result.end()) {
+//             result[place_id] = std::vector<double>(24, 1);
+//             total[place_id] = 24;
+//         }
+
+//         total[place_id] += 1;
+//         result[place_id][hour] += 1;
+//     }
+//     for (const auto& a : result) {
+//         for (size_t i = 0; i < 24; ++i) {
+//             result[a.first][i] /= total[a.first];
+//         }
+//     }
+//     return result;
+// }
+
+std::map<size_t, TStats> calc_stats(const std::vector<TPoint>& pts) {
+    std::map<size_t, std::vector<double>> month_stat;
+
+    for (size_t i = 0; i < pts.size(); ++i) {
+        int month = pts[i].time / (60 * 24 * 30);
         size_t place_id = pts[i].place_id;
         
-        if (result.find(place_id) == result.end()) {
-            result[place_id] = std::vector<double>(24, 1);
-            total[place_id] = 24;
+        if (month_stat.find(place_id) == month_stat.end()) {
+            month_stat[place_id] = std::vector<double>(19, 0.0);
         }
 
-        total[place_id] += 1;
-        result[place_id][hour] += 1;
+        month_stat[place_id][month] += 1;
     }
-    for (const auto& a : result) {
-        for (size_t i = 0; i < 24; ++i) {
-            result[a.first][i] /= total[a.first];
+
+    std::map<size_t, TStats> result;
+    for (const auto& a : month_stat) {
+        double mean = 0.0;
+        for (size_t i = 0; i < TOTAL_MONTH; ++i) {
+            mean += month_stat[a.first][i] / TOTAL_MONTH;
+            result[a.first].size_coef += month_stat[a.first][i];
+        }
+        if ((mean > 25) && ((month_stat[a.first][TOTAL_MONTH - 1] / mean) < 0.1) && ((month_stat[a.first][TOTAL_MONTH - 2] / mean) < 0.1)) {
+            result[a.first].time_coef = 0.01;
+        } else {
+            result[a.first].time_coef = 1;
         }
     }
+    std::cout << "RS: " << result.size() << std::endl;
     return result;
 }
 
 inline std::vector<size_t> rank(
     const std::vector<TPoint>& targs,
-    const std::map<size_t, std::vector<double>>& time_coefs,
+    const std::map<size_t, TStats>& coefs,
     int minute) {
 
     // std::vector<size_t> places(targs.size(), size_t(0)); 
@@ -127,11 +177,11 @@ inline std::vector<size_t> rank(
 
     std::vector<std::pair<size_t, double>> pairs;
     for (const auto& a : ll) {
-        auto it = time_coefs.find(a.first);
-        if (it != time_coefs.end()) {
-            pairs.push_back(std::make_pair(a.first, a.second * it->second[(minute / 60) % 24])); // 
+        auto it = coefs.find(a.first);
+        if (it != coefs.end()) {
+            pairs.push_back(std::make_pair(a.first, a.second * it->second.time_coef / log(it->second.size_coef))); // * it->second[(minute / 60) % 24]
         } else {
-            pairs.push_back(std::make_pair(a.first, a.second / 24)); 
+            pairs.push_back(a); 
         }
     }
 
@@ -151,9 +201,7 @@ inline std::vector<size_t> rank(
 std::vector<TPoint> read_file(char *fname, bool no_ans){
     double start = omp_get_wtime();
 
-    std::cout << "reading : " << fname << std::endl;
-
-    std::vector<TPoint> data;
+    std::cout << "reading : " << fname << std::endl; 
 
     std::string buf;
     double x, y, time, acc;
@@ -162,6 +210,7 @@ std::vector<TPoint> read_file(char *fname, bool no_ans){
     std::ifstream fin(fname);
     getline (fin, buf);
 
+    std::vector<TPoint> data;
     while (getline (fin, buf,',')) {
         cnt += 1;
         if (!(cnt % 2000000))
@@ -198,7 +247,7 @@ int main(int argc, char ** argv) {
     std::cout << test.size() << " lines in test" << std::endl;
     std::vector<TPoint> train = read_file(argv[1], false);
     std::cout << train.size() << " lines in train" << std::endl;
-    std::map<size_t, std::vector<double>> time_coefs = get_time_coefs(train);
+    std::map<size_t, TStats> stats = calc_stats(train);
 
     VpTree<TPoint, dist> tree;
 
@@ -222,7 +271,7 @@ int main(int argc, char ** argv) {
         tree.search(test[i], k, &neighbors, &distances);
 
         fout << i << ",";
-        std::vector<size_t> ans = rank(neighbors, time_coefs, test[i].minute);
+        std::vector<size_t> ans = rank(neighbors, stats, test[i].minute());
         for (size_t j = 0; j < std::min(ans.size(), size_t(3)); ++j) 
             fout << ans[j] << " ";
 
